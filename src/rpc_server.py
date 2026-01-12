@@ -1,8 +1,20 @@
 from flask import Flask, request, jsonify
 from time import sleep
-from threading import Thread
+from async_exec import async_executor, async_task
+import sys
+import signal
 
 app = Flask(__name__)
+
+# Define the function to run when the signal is caught
+def signal_handler(sig, frame):
+    print('SIGINT (Ctrl+C) received. Shutting down gracefully...')
+    async_executor.stop_threadpool()
+    print("RPC server stopped.")
+    sys.exit()
+
+# Register the signal handler for SIGINT
+signal.signal(signal.SIGINT, signal_handler)
 
 class RequestStore:
     def __init__(self):
@@ -16,7 +28,8 @@ class RequestStore:
     def get_request(self, request_id):
         return self.store.get(request_id)
 
-request_store = RequestStore()
+
+request_store = RequestStore()    
 
 def add(x, y):
     print("Simulating a long computation...")
@@ -35,14 +48,15 @@ def check_task_status(data):
 def submit_async_task(method, params, request_id):
     if method == 'async_add':
         request_store.add_request(request_id, result={}, status="running")
-        thread = Thread(target=async_add, args=(request_id, params))
-        thread.start()
+        async_executor.submit(async_add, request_id, params)
 
+@async_task
 def async_add(request_id, params):
     x = params.get('x')
     y = params.get('y')
     sleep(60)
     request_store.add_request(request_id, result=x + y, status="completed")
+    async_executor.task_store.set_task_status(request_id, "completed")
     return x + y
 
 @app.route('/rpc', methods=['POST'])
